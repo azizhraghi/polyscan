@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   LayoutDashboard, Camera, Target, MapPin, Bell, FileText,
   Settings, Wifi, Activity, Play, Pause, Square,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
   Download, Eye, RotateCcw, CheckCircle, Info, AlertTriangle,
-  Battery, Navigation
+  Battery, Navigation, Upload, Search, Zap, ShieldAlert, Clock, Trash2, Sun, Moon, X
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -57,7 +57,8 @@ const NAV = [
   { id:"map",       label:"Carte Zones", icon:MapPin          },
   { id:"alerts",    label:"Alertes",     icon:Bell            },
   { id:"reports",   label:"Rapports",    icon:FileText        },
-  { id:"control",   label:"Contrôle",   icon:Settings        },
+  { id:"control",   label:"Contrôle",    icon:Settings        },
+  { id:"analyse",   label:"Analyse IA",  icon:Search          },
 ];
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -66,6 +67,46 @@ const C = {
   accent:"#22d3ee", text:"#ccdaeb", muted:"#46607a",
   danger:"#ef4444", warning:"#f59e0b", success:"#10b981", info:"#60a5fa",
 };
+
+// ── Toast notification system ───────────────────────────────────────────────
+let _toastId = 0;
+function useToast() {
+  const [toasts, setToasts] = useState([]);
+  const add = useCallback((msg, type = "success") => {
+    const id = ++_toastId;
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
+  }, []);
+  const remove = useCallback((id) => setToasts(t => t.filter(x => x.id !== id)), []);
+  return { toasts, add, remove };
+}
+
+function ToastContainer({ toasts, remove }) {
+  return (
+    <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
+      {toasts.map((t) => {
+        const colors = t.type === "success" ? { bg: "#052e16", border: "#065f46", color: "#34d399", icon: <CheckCircle size={14}/> }
+          : t.type === "error" ? { bg: "#2d0808", border: "#7f1d1d", color: "#f87171", icon: <AlertTriangle size={14}/> }
+          : { bg: "#0c1a2e", border: "#192d4a", color: "#22d3ee", icon: <Info size={14}/> };
+        return (
+          <div key={t.id} style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px",
+            borderRadius: 10, background: colors.bg, border: `1px solid ${colors.border}`,
+            color: colors.color, fontSize: 13, fontWeight: 500, pointerEvents: "auto",
+            animation: "toastIn 0.3s ease-out", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            minWidth: 280, backdropFilter: "blur(8px)",
+          }}>
+            {colors.icon}
+            <span style={{ flex: 1 }}>{t.msg}</span>
+            <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: colors.color, cursor: "pointer", padding: 2, display: "flex", opacity: 0.6 }}>
+              <X size={12}/>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const sevStyle = s => ({
@@ -88,7 +129,7 @@ function Card({children, style={}}) {
 }
 
 function CardTitle({children}) {
-  return <p style={{fontSize:13,color:C.text,fontWeight:600,marginBottom:14}}>{children}</p>;
+  return <div style={{fontSize:13,color:C.text,fontWeight:600,marginBottom:14}}>{children}</div>;
 }
 
 // ── Stat card ──────────────────────────────────────────────────────────────────
@@ -114,11 +155,23 @@ function Stat({label,value,unit,Icon,color=C.accent}) {
 function Dashboard({battery,uptime}) {
   const pad = n => String(n).padStart(2,"0");
   const fmt = s => `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`;
+
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    fetch("/api/stats").then(r => r.json()).then(setStats).catch(() => {});
+  }, []);
+
+  const totalAnalyses = stats?.total_analyses ?? 0;
+  const totalDefects  = stats?.total_defects ?? 0;
+  const timeline      = stats?.timeline?.length ? stats.timeline : TIMELINE;
+  const typeData      = stats?.type_data?.length ? stats.type_data : TYPE_DATA;
+  const recentDefects = stats?.recent_defects ?? [];
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:18}}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
-        <Stat label="Surface inspectée" value="247" unit="m²"  Icon={Navigation} color={C.accent}/>
-        <Stat label="Défauts détectés"  value="9"   unit=""    Icon={Target}      color={C.danger}/>
+        <Stat label="Images analysées" value={totalAnalyses} unit=""   Icon={Navigation} color={C.accent}/>
+        <Stat label="Défauts détectés"  value={totalDefects}  unit=""   Icon={Target}     color={totalDefects>0?C.danger:C.success}/>
         <Stat label="Batterie"          value={Math.round(battery)} unit="%" Icon={Battery} color={battery<20?C.danger:C.success}/>
         <Stat label="Uptime"            value={fmt(uptime)}    unit="" Icon={Activity} color="#a78bfa"/>
       </div>
@@ -126,46 +179,64 @@ function Dashboard({battery,uptime}) {
       <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:14}}>
         <Card>
           <CardTitle>Défauts cumulés dans le temps</CardTitle>
-          <ResponsiveContainer width="100%" height={175}>
-            <AreaChart data={TIMELINE} margin={{top:0,right:0,left:-22,bottom:0}}>
-              <defs>
-                <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="10%" stopColor={C.accent} stopOpacity={0.35}/>
-                  <stop offset="95%" stopColor={C.accent} stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="t" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
-              <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
-              <Tooltip contentStyle={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}}/>
-              <Area type="monotone" dataKey="d" stroke={C.accent} strokeWidth={2} fill="url(#ag)" dot={false} name="Défauts"/>
-            </AreaChart>
-          </ResponsiveContainer>
+          {timeline.length > 0 ? (
+            <ResponsiveContainer width="100%" height={175}>
+              <AreaChart data={timeline} margin={{top:0,right:0,left:-22,bottom:0}}>
+                <defs>
+                  <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="10%" stopColor={C.accent} stopOpacity={0.35}/>
+                    <stop offset="95%" stopColor={C.accent} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="t" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
+                <Tooltip contentStyle={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}}/>
+                <Area type="monotone" dataKey="d" stroke={C.accent} strokeWidth={2} fill="url(#ag)" dot={false} name="Défauts"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{height:175,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:13}}>
+              Lancez des analyses pour voir le graphique
+            </div>
+          )}
         </Card>
         <Card>
           <CardTitle>Répartition par type</CardTitle>
-          <ResponsiveContainer width="100%" height={175}>
-            <BarChart data={TYPE_DATA} layout="vertical" margin={{top:0,right:0,left:-12,bottom:0}}>
-              <XAxis type="number" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/>
-              <YAxis type="category" dataKey="name" tick={{fill:"#7a9bb5",fontSize:10}} axisLine={false} tickLine={false} width={76}/>
-              <Tooltip contentStyle={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}}/>
-              <Bar dataKey="n" radius={4} fill={C.accent} name="Nb."/>
-            </BarChart>
-          </ResponsiveContainer>
+          {typeData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={175}>
+              <BarChart data={typeData} layout="vertical" margin={{top:0,right:0,left:-12,bottom:0}}>
+                <XAxis type="number" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis type="category" dataKey="name" tick={{fill:"#7a9bb5",fontSize:10}} axisLine={false} tickLine={false} width={76}/>
+                <Tooltip contentStyle={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}}/>
+                <Bar dataKey="n" radius={4} fill={C.accent} name="Nb."/>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{height:175,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:13}}>
+              Aucune donnée
+            </div>
+          )}
         </Card>
       </div>
 
       <Card>
         <CardTitle>Derniers défauts détectés</CardTitle>
-        {DEFECTS.slice(0,4).map((d,i)=>(
-          <div key={d.id} style={{display:"flex",alignItems:"center",gap:16,padding:"9px 0",borderBottom:i<3?`1px solid ${C.border}22`:"none"}}>
-            <span style={{fontSize:11,color:C.muted,width:36,flexShrink:0}}>{d.time}</span>
-            <SevBadge s={d.sev}/>
-            <span style={{fontSize:13,color:C.text,flex:1}}>{d.type}</span>
-            <span style={{fontSize:12,color:C.muted}}>{d.surface}</span>
-            <span style={{fontSize:12,color:C.accent,fontFamily:"monospace"}}>Zone {d.zone}</span>
-            <span style={{fontSize:12,color:C.muted}}>Conf. {d.conf}%</span>
+        {recentDefects.length > 0 ? recentDefects.map((d,i)=> {
+          const sevKey = d.severity === "Faible" ? "faible" : d.severity === "Moyenne" ? "moyenne" : "élevée";
+          return (
+            <div key={i} style={{display:"flex",alignItems:"center",gap:16,padding:"9px 0",borderBottom:i<recentDefects.length-1?`1px solid ${C.border}22`:"none"}}>
+              <span style={{fontSize:11,color:C.muted,width:36,flexShrink:0}}>{d.time}</span>
+              <SevBadge s={sevKey}/>
+              <span style={{fontSize:13,color:C.text,flex:1}}>{d.type}</span>
+              <span style={{fontSize:12,color:C.muted}}>{d.filename}</span>
+              <span style={{fontSize:12,color:C.muted}}>Conf. {d.confidence}%</span>
+            </div>
+          );
+        }) : (
+          <div style={{textAlign:"center",padding:"28px 0",color:C.muted,fontSize:13}}>
+            Aucun défaut détecté. Lancez une analyse IA !
           </div>
-        ))}
+        )}
       </Card>
     </div>
   );
@@ -562,6 +633,427 @@ function ControlPage() {
   );
 }
 
+// ─── Analyse IA (Roboflow Integration) ────────────────────────────────────────
+function AnalyseIA({ addToast }) {
+  const [file, setFile]             = useState(null);
+  const [preview, setPreview]       = useState(null);
+  const [loading, setLoading]       = useState(false);
+  const [result, setResult]         = useState(null);
+  const [error, setError]           = useState(null);
+  const [dragOver, setDragOver]     = useState(false);
+  const [history, setHistory]       = useState([]);
+  const [viewingHistory, setViewingHistory] = useState(null);
+
+  // Fetch history on mount
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch("/api/history");
+      if (res.ok) setHistory(await res.json());
+    } catch {}
+  }, []);
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const handleFile = (f) => {
+    if (!f) return;
+    setFile(f);
+    setResult(null);
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = (e) => setPreview(e.target.result);
+    reader.readAsDataURL(f);
+  };
+
+  const onDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f && f.type.startsWith("image/")) handleFile(f);
+  }, []);
+
+  const onDragOver = useCallback((e) => { e.preventDefault(); setDragOver(true); }, []);
+  const onDragLeave = useCallback(() => setDragOver(false), []);
+
+  const analyze = async () => {
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/api/analyze", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur serveur");
+      setResult(data);
+      addToast("Analyse terminée avec succès !", "success");
+      // Auto-save to history
+      try {
+        const sev = severityFor(data.defect_count);
+        await fetch("/api/history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            predictions: data.predictions,
+            defect_count: data.defect_count,
+            timestamp: data.timestamp,
+            severity: sev.label,
+            thumbnail: preview,
+            filename: file?.name || "image.jpg",
+          }),
+        });
+        fetchHistory();
+      } catch {}
+    } catch (err) {
+      setError(err.message || "Impossible de contacter le serveur.");
+      addToast("Échec de l'analyse.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reset = () => {
+    setFile(null); setPreview(null); setResult(null); setError(null); setViewingHistory(null);
+  };
+
+  const loadHistory = async (id) => {
+    try {
+      const res = await fetch(`/api/history/${id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setResult({ predictions: data.predictions, defect_count: data.defect_count, timestamp: data.timestamp });
+      setPreview(data.thumbnail);
+      setFile(null);
+      setViewingHistory(id);
+      setError(null);
+    } catch {}
+  };
+
+  const deleteHistory = async (id, e) => {
+    e.stopPropagation();
+    try {
+      await fetch(`/api/history/${id}`, { method: "DELETE" });
+      fetchHistory();
+      addToast("Analyse supprimée de l'historique.", "info");
+      if (viewingHistory === id) reset();
+    } catch {}
+  };
+
+  const severityFor = (count) =>
+    count === 0 ? { label: "Aucun défaut", color: C.success, bg: "#052e16", border: "#065f46" }
+    : count <= 2 ? { label: "Faible", color: "#34d399", bg: "#052e16", border: "#065f46" }
+    : count <= 5 ? { label: "Moyenne", color: "#fbbf24", bg: "#2d1500", border: "#78350f" }
+    :              { label: "Élevée", color: "#f87171", bg: "#2d0808", border: "#7f1d1d" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* ── Upload zone ────────────────────────────────── */}
+      <Card>
+        <CardTitle>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Search size={14} color={C.accent} />
+            Analyse d'image par Intelligence Artificielle
+          </div>
+        </CardTitle>
+        <p style={{ fontSize: 12, color: C.muted, marginBottom: 16, lineHeight: 1.7 }}>
+          Téléchargez une photo de mur ou de surface. L'IA Roboflow détectera automatiquement
+          les fissures, l'humidité, l'écaillage, la corrosion et autres défauts structurels.
+        </p>
+
+        {!preview ? (
+          <div
+            onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
+            style={{
+              border: `2px dashed ${dragOver ? C.accent : C.border}`,
+              borderRadius: 14,
+              padding: "48px 20px",
+              textAlign: "center",
+              background: dragOver ? `${C.accent}08` : C.surface,
+              transition: "all 0.2s",
+              cursor: "pointer",
+            }}
+            onClick={() => document.getElementById("ia-upload").click()}
+          >
+            <Upload size={32} color={C.accent} style={{ marginBottom: 12, opacity: 0.6 }} />
+            <p style={{ fontSize: 14, color: C.text, fontWeight: 500, marginBottom: 6 }}>
+              Glissez une image ici ou cliquez pour parcourir
+            </p>
+            <p style={{ fontSize: 11, color: C.muted }}>PNG, JPG, WEBP — max 10 Mo</p>
+            <input
+              id="ia-upload" type="file" accept="image/*" hidden
+              onChange={(e) => handleFile(e.target.files?.[0])}
+            />
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", border: `1px solid ${C.border}` }}>
+              <img
+                src={result?.visualized_image ? `data:image/jpeg;base64,${result.visualized_image}` : preview}
+                alt="Preview"
+                style={{ width: "100%", maxHeight: 420, objectFit: "contain", display: "block", background: "#020810" }}
+              />
+              {loading && (
+                <div style={{
+                  position: "absolute", inset: 0,
+                  background: "rgba(6,13,28,0.75)",
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14,
+                }}>
+                  <RotateCcw size={28} color={C.accent} style={{ animation: "spin 1s linear infinite" }} />
+                  <span style={{ fontSize: 14, color: C.accent, fontWeight: 600 }}>Analyse en cours…</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>Envoi à Roboflow et traitement IA</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={analyze} disabled={loading} style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "10px 22px",
+                borderRadius: 9, cursor: loading ? "not-allowed" : "pointer",
+                background: loading ? "#192d4a" : C.accent, color: loading ? C.muted : "#060d1c",
+                border: "none", fontSize: 13, fontWeight: 700, transition: "all 0.2s",
+              }}>
+                <Zap size={14} />
+                {loading ? "Analyse en cours…" : "Analyser avec l'IA"}
+              </button>
+              <button onClick={reset} style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "10px 16px",
+                borderRadius: 9, cursor: "pointer",
+                background: C.card, color: C.muted, border: `1px solid ${C.border}`,
+                fontSize: 13, fontWeight: 500,
+              }}>
+                <RotateCcw size={13} /> Nouvelle image
+              </button>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* ── Error ───────────────────────────────────────── */}
+      {error && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px",
+          borderRadius: 10, background: "#1a0808", border: "1px solid #7f1d1d",
+        }}>
+          <AlertTriangle size={16} color="#f87171" style={{ flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <p style={{ fontSize: 13, color: "#f87171", fontWeight: 600, marginBottom: 4 }}>Erreur d'analyse</p>
+            <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{error}</p>
+            <p style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+              Vérifiez que le backend Flask est lancé sur le port 5000 (<code style={{ color: C.accent }}>python server.py</code>)
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Results ─────────────────────────────────────── */}
+      {result && (
+        <>
+          {/* Summary stats */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+            <Stat label="Défauts détectés" value={result.defect_count} unit="" Icon={Target} color={result.defect_count > 0 ? C.danger : C.success} />
+            <Stat label="Prédictions" value={result.predictions?.length || 0} unit="" Icon={Eye} color={C.accent} />
+            {(() => {
+              const sev = severityFor(result.defect_count);
+              return (
+                <div style={{ background: sev.bg, border: `1px solid ${sev.border}`, borderRadius: 12, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Sévérité</span>
+                    <ShieldAlert size={14} color={sev.color} style={{ opacity: 0.6 }} />
+                  </div>
+                  <span style={{ fontSize: 22, fontWeight: 700, color: sev.color }}>{sev.label}</span>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Predictions table */}
+          {result.predictions?.length > 0 && (
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "14px 16px 0" }}>
+                <CardTitle>Détails des prédictions</CardTitle>
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                    {["#", "Type", "Confiance", "Position X", "Position Y", "Largeur", "Hauteur"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "10px 14px", fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 500 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.predictions.map((p, i) => (
+                    <tr key={i} style={{ borderBottom: i < result.predictions.length - 1 ? `1px solid ${C.border}22` : "none", background: i % 2 === 1 ? "#090f1e" : "transparent" }}>
+                      <td style={{ padding: "10px 14px", fontSize: 11, color: C.muted, fontFamily: "monospace" }}>#{String(i + 1).padStart(3, "0")}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 13, color: C.text, fontWeight: 500 }}>{p.class}</td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ flex: 1, background: C.surface, borderRadius: 9999, height: 4, minWidth: 36 }}>
+                            <div style={{ background: p.confidence >= 80 ? C.accent : C.warning, borderRadius: 9999, height: 4, width: `${p.confidence}%` }} />
+                          </div>
+                          <span style={{ fontSize: 11, color: "#7a9bb5", flexShrink: 0 }}>{p.confidence}%</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#7a9bb5", fontFamily: "monospace" }}>{Math.round(p.x)}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#7a9bb5", fontFamily: "monospace" }}>{Math.round(p.y)}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#7a9bb5", fontFamily: "monospace" }}>{Math.round(p.width)}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#7a9bb5", fontFamily: "monospace" }}>{Math.round(p.height)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+
+          {/* Download PDF + Timestamp */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <button
+              onClick={async () => {
+                try {
+                  const sev = severityFor(result.defect_count);
+                  const res = await fetch("/api/report", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      predictions: result.predictions,
+                      defect_count: result.defect_count,
+                      timestamp: result.timestamp,
+                      severity: sev.label,
+                      image: preview,
+                    }),
+                  });
+                  if (!res.ok) throw new Error("Erreur génération PDF");
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `PolyScan_Rapport_${new Date().toISOString().slice(0,10)}.pdf`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                } catch (err) {
+                  alert("Erreur: " + err.message);
+                }
+              }}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "10px 20px",
+                borderRadius: 9, cursor: "pointer",
+                background: "linear-gradient(135deg, #22d3ee, #0ea5e9)",
+                color: "#060d1c", border: "none", fontSize: 13, fontWeight: 700,
+                transition: "all 0.2s", boxShadow: "0 2px 12px rgba(34,211,238,0.25)",
+              }}
+            >
+              <Download size={14} /> Télécharger le rapport PDF
+            </button>
+            <span style={{ fontSize: 11, color: C.muted }}>
+              Analysé le {new Date(result.timestamp).toLocaleString("fr-FR")}
+            </span>
+          </div>
+        </>
+      )}
+
+      {/* ── History ─────────────────────────────────────── */}
+      <Card>
+        <CardTitle>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Clock size={14} color={C.accent} />
+              Historique des analyses
+            </div>
+            {history.length > 0 && (
+              <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>
+                {history.length} analyse{history.length > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        </CardTitle>
+
+        {history.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "28px 0", color: C.muted, fontSize: 13 }}>
+            Aucune analyse sauvegardée. Lancez une première analyse !
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {history.map((h, i) => {
+              const isActive = viewingHistory === h.id;
+              const sevColor = h.severity === "Faible" ? "#34d399" : h.severity === "Moyenne" ? "#fbbf24" : h.severity === "Élevée" ? "#f87171" : C.success;
+              return (
+                <div
+                  key={h.id}
+                  onClick={() => loadHistory(h.id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 14,
+                    padding: "12px 14px", borderRadius: 10, cursor: "pointer",
+                    background: isActive ? `${C.accent}12` : C.surface,
+                    border: `1px solid ${isActive ? C.accent : C.border}`,
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {/* Index */}
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    background: C.card, border: `1px solid ${C.border}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 700, color: C.accent, flexShrink: 0,
+                  }}>
+                    #{i + 1}
+                  </div>
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: C.text, fontWeight: 500, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {h.filename || "Image"}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted }}>
+                      {new Date(h.timestamp).toLocaleString("fr-FR")}
+                    </div>
+                  </div>
+
+                  {/* Defect count */}
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "4px 10px", borderRadius: 8,
+                    background: h.defect_count > 0 ? "#2d0808" : "#052e16",
+                    border: `1px solid ${h.defect_count > 0 ? "#7f1d1d" : "#065f46"}`,
+                  }}>
+                    <Target size={11} color={h.defect_count > 0 ? "#f87171" : "#34d399"} />
+                    <span style={{ fontSize: 11, fontWeight: 600, color: h.defect_count > 0 ? "#f87171" : "#34d399" }}>
+                      {h.defect_count}
+                    </span>
+                  </div>
+
+                  {/* Severity badge */}
+                  <span style={{
+                    fontSize: 11, padding: "3px 10px", borderRadius: 9999, fontWeight: 600,
+                    color: sevColor,
+                    background: h.severity === "Faible" ? "#052e16" : h.severity === "Moyenne" ? "#2d1500" : h.severity === "Élevée" ? "#2d0808" : "#052e16",
+                    border: `1px solid ${h.severity === "Faible" ? "#065f46" : h.severity === "Moyenne" ? "#78350f" : h.severity === "Élevée" ? "#7f1d1d" : "#065f46"}`,
+                  }}>
+                    {h.severity}
+                  </span>
+
+                  {/* Delete */}
+                  <button
+                    onClick={(e) => deleteHistory(h.id, e)}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      color: C.muted, padding: 4, borderRadius: 6, display: "flex",
+                      transition: "color 0.15s",
+                    }}
+                    onMouseEnter={(e) => e.target.closest("button").style.color = "#f87171"}
+                    onMouseLeave={(e) => e.target.closest("button").style.color = C.muted}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN APP
 // ══════════════════════════════════════════════════════════════════════════════
@@ -569,24 +1061,49 @@ export default function PolyScan() {
   const [page,setPage]         = useState("dashboard");
   const [battery,setBattery]   = useState(25);
   const [uptime,setUptime]     = useState(3421);
-  const [collapsed,setCollapsed]= useState(false);
+  const [collapsed,setCollapsed]= useState(window.innerWidth < 768);
+  const [isMobile,setIsMobile] = useState(window.innerWidth < 768);
   const [unread,setUnread]     = useState(2);
+  const [theme, setTheme]      = useState("dark");
+  const { toasts, add: addToast, remove: removeToast } = useToast();
 
   useEffect(()=>{
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if(mobile) setCollapsed(true);
+    };
+    window.addEventListener("resize", handleResize);
     const t = setInterval(()=>{ setBattery(b=>Math.max(0,b-0.004)); setUptime(u=>u+1); },1000);
-    return ()=>clearInterval(t);
+    return ()=>{ clearInterval(t); window.removeEventListener("resize", handleResize); };
   },[]);
 
-  const goTo = id => { setPage(id); if(id==="alerts") setUnread(0); };
-  const W = collapsed ? 52 : 222;
+  const goTo = id => { 
+    setPage(id); 
+    if(id==="alerts") setUnread(0); 
+    if(isMobile) setCollapsed(true);
+  };
+  const W = collapsed ? (isMobile ? 0 : 52) : 222;
 
   return (
-    <div style={{fontFamily:"system-ui,-apple-system,sans-serif",minHeight:660,display:"flex",background:C.bg,color:C.text}}>
+    <div className={theme} style={{fontFamily:"system-ui,-apple-system,sans-serif",height:"100vh",display:"flex",background:C.bg,color:C.text,overflow:"hidden"}}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes toastIn { from { transform: translateX(100%); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
         .ps-nav:hover { background: #0f1e35 !important; color: #ccdaeb !important; }
         .ps-icon-btn:hover { background: #0f1e35 !important; color: #ccdaeb !important; }
+        
+        /* Light mode invert hack */
+        .light { filter: invert(1) hue-rotate(180deg); }
+        .light img, .light svg, .light .recharts-surface, .light .no-invert { filter: invert(1) hue-rotate(180deg); }
+        
+        /* Mobile responsive adjustments */
+        @media (max-width: 768px) {
+          .grid-container { grid-template-columns: 1fr !important; }
+          header { padding: 0 16px !important; }
+        }
       `}</style>
+      <ToastContainer toasts={toasts} remove={removeToast} />
 
       {/* ─ Sidebar ─ */}
       <aside style={{width:W,flexShrink:0,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",transition:"width 0.22s",overflow:"hidden"}}>
@@ -638,7 +1155,12 @@ export default function PolyScan() {
       </aside>
 
       {/* ─ Main ─ */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>
+        {/* Mobile overlay */}
+        {isMobile && !collapsed && (
+          <div onClick={()=>setCollapsed(true)} style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",zIndex:10}}/>
+        )}
+        
         <header style={{height:56,background:C.surface,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 24px",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             <button onClick={()=>setCollapsed(c=>!c)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,display:"flex",flexDirection:"column",gap:3.5,padding:2}}>
@@ -647,10 +1169,17 @@ export default function PolyScan() {
             <span style={{fontSize:14,fontWeight:600,color:C.text}}>{NAV.find(n=>n.id===page)?.label}</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:20,fontSize:12,color:C.muted}}>
-            <span><span style={{color:C.accent}}>●</span> WiFi 5GHz</span>
-            <span>Ping 12 ms</span>
-            <span style={{color:C.border}}>│</span>
-            <span style={{color:C.text,fontWeight:500}}>Session active</span>
+            <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",display:"flex",alignItems:"center",padding:4}}>
+              {theme === "dark" ? <Sun size={16}/> : <Moon size={16}/>}
+            </button>
+            {!isMobile && (
+              <>
+                <span><span style={{color:C.accent}}>●</span> WiFi 5GHz</span>
+                <span>Ping 12 ms</span>
+                <span style={{color:C.border}}>│</span>
+                <span style={{color:C.text,fontWeight:500}}>Session active</span>
+              </>
+            )}
           </div>
         </header>
 
@@ -662,6 +1191,7 @@ export default function PolyScan() {
           {page==="alerts"    && <AlertsPage/>}
           {page==="reports"   && <ReportsPage/>}
           {page==="control"   && <ControlPage/>}
+          {page==="analyse"   && <AnalyseIA addToast={addToast}/>}
         </main>
       </div>
     </div>
