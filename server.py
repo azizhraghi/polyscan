@@ -79,6 +79,22 @@ def health():
     })
 
 
+# ── /api/network ───────────────────────────────────────────────────────────
+@app.route("/api/network", methods=["GET"])
+def network_info():
+    """Return the machine's LAN IP so the mobile QR code works."""
+    import socket
+    ip = "127.0.0.1"
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+    return jsonify({"ip": ip, "port": 3000, "protocol": "https"})
+
+
 # ── /api/analyze ────────────────────────────────────────────────────────────
 @app.route("/api/analyze", methods=["POST"])
 def analyze():

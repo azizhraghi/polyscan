@@ -4,7 +4,7 @@ import {
   Settings, Wifi, Activity, Play, Pause, Square,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
   Download, Eye, RotateCcw, CheckCircle, Info, AlertTriangle,
-  Battery, Navigation, Upload, Search, Zap, ShieldAlert, Clock, Trash2, Sun, Moon, X
+  Battery, Navigation, Upload, Search, Zap, ShieldAlert, Clock, Trash2, Sun, Moon, X, Smartphone
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -59,6 +59,7 @@ const NAV = [
   { id:"reports",   label:"Rapports",    icon:FileText        },
   { id:"control",   label:"Contrôle",    icon:Settings        },
   { id:"analyse",   label:"Analyse IA",  icon:Search          },
+  { id:"mobile",    label:"Scanner Mobile", icon:Smartphone    },
 ];
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -1054,6 +1055,121 @@ function AnalyseIA({ addToast }) {
   );
 }
 
+// ─── Mobile Scanner Page (QR Code + Instructions) ─────────────────────────────
+function MobilePage() {
+  const [ip, setIp] = useState(null);
+  useEffect(() => {
+    // Fetch real LAN IP from backend, fallback to window.location
+    fetch("/api/network").then(r => r.json())
+      .then(d => { if (d.ip) setIp(`${d.protocol || "https"}://${d.ip}:${d.port || 3000}`); })
+      .catch(() => {
+        const proto = window.location.protocol;
+        const host = window.location.hostname;
+        const port = window.location.port || "3000";
+        setIp(`${proto}//${host}:${port}`);
+      });
+  }, []);
+
+  const mobileUrl = ip ? `${ip}/#/mobile` : "";
+  // QR code: black on white for maximum scannability
+  const qrSrc = mobileUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileUrl)}&bgcolor=ffffff&color=000000&margin=8` : "";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <Card>
+        <CardTitle>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Smartphone size={14} color={C.accent} />
+            Scanner Mobile — Téléphone comme Robot
+          </div>
+        </CardTitle>
+        <p style={{ fontSize: 12, color: C.muted, marginBottom: 20, lineHeight: 1.7 }}>
+          Utilisez votre téléphone comme capteur d'inspection. Scannez le QR code ci-dessous
+          ou ouvrez le lien sur votre téléphone pour accéder à la caméra. Les résultats
+          d'analyse apparaîtront en temps réel sur ce tableau de bord.
+        </p>
+
+        <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
+          {/* QR Code */}
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+            {qrSrc ? (
+              <img src={qrSrc} alt="QR Code" style={{ width: 180, height: 180, borderRadius: 12 }} className="no-invert" />
+            ) : (
+              <div style={{ width: 180, height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>Chargement...</div>
+            )}
+            <span style={{ fontSize: 11, color: C.muted, textAlign: "center" }}>Scannez avec votre téléphone</span>
+          </div>
+
+          {/* Instructions */}
+          <div style={{ flex: 1, minWidth: 250, display: "flex", flexDirection: "column", gap: 14 }}>
+            {[
+              { step: "1", title: "Même réseau WiFi", desc: "Assurez-vous que votre téléphone et cet ordinateur sont sur le même réseau WiFi." },
+              { step: "2", title: "Scannez le QR code", desc: "Ouvrez l'appareil photo de votre téléphone et scannez le QR code, ou entrez l'URL manuellement." },
+              { step: "3", title: "Autorisez la caméra", desc: "Acceptez la demande d'accès à la caméra et à la localisation GPS." },
+              { step: "4", title: "Inspectez !", desc: "Pointez la caméra vers les murs et surfaces à inspecter. Appuyez sur le bouton pour capturer et analyser." },
+            ].map(({ step, title, desc }) => (
+              <div key={step} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ width: 28, height: 28, borderRadius: 8, background: `${C.accent}18`, border: `1px solid ${C.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: C.accent, flexShrink: 0 }}>{step}</div>
+                <div>
+                  <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginBottom: 3 }}>{title}</div>
+                  <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5 }}>{desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* URL display */}
+      <Card>
+        <CardTitle>Lien direct</CardTitle>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: C.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {mobileUrl || "Chargement..."}
+          </div>
+          <button
+            onClick={() => { navigator.clipboard.writeText(mobileUrl); }}
+            style={{ padding: "10px 16px", borderRadius: 8, background: C.accent, color: "#060d1c", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            Copier
+          </button>
+        </div>
+        <p style={{ fontSize: 11, color: C.muted, marginTop: 10, lineHeight: 1.6 }}>
+          ⚠️ Le téléphone doit être connecté au même réseau WiFi que cet ordinateur.
+          Si l'adresse est <code style={{ color: C.accent }}>localhost</code>, utilisez l'adresse IP de votre machine
+          (ex: <code style={{ color: C.accent }}>192.168.x.x</code>).
+        </p>
+      </Card>
+
+      {/* Architecture diagram */}
+      <Card>
+        <CardTitle>Architecture du système</CardTitle>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, flexWrap: "wrap", padding: "16px 0" }}>
+          {[
+            { icon: "📱", label: "Téléphone", sub: "Caméra + GPS" },
+            { icon: "→", label: "", sub: "" },
+            { icon: "🖥️", label: "Backend Flask", sub: "Port 5000" },
+            { icon: "→", label: "", sub: "" },
+            { icon: "☁️", label: "Roboflow IA", sub: "Détection défauts" },
+            { icon: "→", label: "", sub: "" },
+            { icon: "📊", label: "Dashboard", sub: "Résultats live" },
+          ].map((item, i) =>
+            item.label === "" ? (
+              <div key={i} style={{ fontSize: 20, color: C.accent, padding: "0 12px" }}>{item.icon}</div>
+            ) : (
+              <div key={i} style={{ textAlign: "center", padding: "10px 14px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, minWidth: 100 }}>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>{item.icon}</div>
+                <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{item.label}</div>
+                <div style={{ fontSize: 10, color: C.muted }}>{item.sub}</div>
+              </div>
+            )
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN APP
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1192,6 +1308,7 @@ export default function PolyScan() {
           {page==="reports"   && <ReportsPage/>}
           {page==="control"   && <ControlPage/>}
           {page==="analyse"   && <AnalyseIA addToast={addToast}/>}
+          {page==="mobile"    && <MobilePage/>}
         </main>
       </div>
     </div>
